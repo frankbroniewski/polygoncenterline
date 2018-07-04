@@ -114,7 +114,7 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
 
     def processAlgorithm(self, parameters, context, feedback):
 
-        self.validateInput(parameters, context, feedback)
+        self.validate_input(parameters, context, feedback)
 
         # 1 qgis:pointsalonglines
         params = {
@@ -333,7 +333,7 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
         proc = processing.run(name, params, context=context, feedback=feedback)
         return proc['OUTPUT']
 
-    def validateInput(self, parameters, context, feedback):
+    def validate_input(self, parameters, context, feedback):
         """Validate the input layer against several requirements"""
 
         lyr = self.parameterAsSource(
@@ -341,7 +341,10 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
             self.INPUT,
             context
         )
-        # feedback.pushDebugInfo(str(type(lyr)))
+        
+        if lyr is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters,
+                                         self.INPUT))
 
         if lyr.sourceCrs().isGeographic():
             msg = 'No geographic CRS for input layer allowed'
