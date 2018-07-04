@@ -232,12 +232,12 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         max_feature = None
         for feature in matrix.getFeatures():
             if feature['Distance'] > max_distance:
-                feedback.pushDebugInfo(
-                    "tf %s, if %s, dis %s" %
-                    (feature['TargetID'],
-                     feature['InputID'],
-                     feature['Distance'])
-                )
+                # feedback.pushDebugInfo(
+                #     "tf %s, if %s, dis %s" %
+                #     (feature['TargetID'],
+                #      feature['InputID'],
+                #      feature['Distance'])
+                # )
                 max_distance = feature['Distance']
                 max_feature = QgsFeature(feature)
 
@@ -250,31 +250,39 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         )
         target_feature = next(target_features)
 
+        if not target_feature.isValid():
+            feedback.pushDebugInfo(
+                "%s, %s" % (
+                    target_feature.geometry().asPoint().x(),
+                    target_feature.geometry().asPoint().y()
+                )
+            )
+            raise QgsProcessingException('Path calculation failed: target point')
+
+        target_point = '%s,%s' % (target_feature.geometry().asPoint().x(),
+                                  target_feature.geometry().asPoint().y())
+
         input_expr = "vid=%s" % max_feature['InputID']
         input_features = vid.getFeatures(
             QgsFeatureRequest(QgsExpression(input_expr))
         )
         input_feature = next(input_features)
-
-
-        feedback.pushDebugInfo(
-            "%s, %s" % (
-                input_feature.geometry().asPoint().x(),
-                input_feature.geometry().asPoint().y()
+        if not input_feature.isValid() and not target_feature.isValid():
+            feedback.pushDebugInfo(
+                "%s, %s" % (
+                    input_feature.geometry().asPoint().x(),
+                    input_feature.geometry().asPoint().y()
+                )
             )
-        )
-        feedback.pushDebugInfo(
-            "%s, %s" % (
-                target_feature.geometry().asPoint().x(),
-                target_feature.geometry().asPoint().y()
-            )
-        )
+            raise QgsProcessingException('Path calculation failed: input point')
+        input_point = '%s,%s' % (input_feature.geometry().asPoint().x(),
+                                 input_feature.geometry().asPoint().y())
 
         # qgis:shortestpathpointtopoint
         params = {
             'INPUT': selection,
-            'START_POINT': input_feature.geometry().asPoint(),
-            'END_POINT': target_feature.geometry().asPoint(),
+            'START_POINT': input_point,
+            'END_POINT': target_point,
             'STRATEGY': 0,
             'DEFAULT_DIRECTION': 2,
             'DEFAULT_SPEED': 5,
