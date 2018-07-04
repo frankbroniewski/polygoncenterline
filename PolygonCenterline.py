@@ -27,6 +27,7 @@ __revision__  = '$Format:%H$'
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsApplication,
                        QgsFeature,
+                       QgsWkbTypes,
                        QgsProcessing,
                        QgsExpression,
                        QgsFeatureRequest,
@@ -60,6 +61,14 @@ class PolygonCenterline(QgsProcessingAlgorithm):
     def icon(self):
         return QgsApplication.getThemeIcon("algorithms/mAlgorithmDelaunay.svg")
 
+    def helpString(self):
+        return self.tr("""Calculate a polygon centerline for pretty cartographic labeling of polygon features.
+
+INPUT: a single polygon feature, no Multipolygon allowed here
+
+DISTANCE: this measure is used for voronoi network creation. Take a sensible measure, make sure the value is not too small, otherwise the calculation time will increase. Try with the build in algorithm "Points along geometry" for getting an idea for a good spacing."""
+        )
+
     def svgIconPath(self):
         return QgsApplication.iconPath("algorithms/mAlgorithmDelaunay.svg")
 
@@ -76,7 +85,7 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         return self.tr('Calculate a polygon centerline')
 
     def shortHelpString(self):
-        return self.tr('Calculate a polygon centerline for pretty cartographic labeling of polygon features')
+        return self.helpString()
 
     def initAlgorithm(self, config=None):
         self.addParameter(
@@ -104,6 +113,8 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+
+        self.validateInput(parameters, context, feedback)
 
         # 1 qgis:pointsalonglines
         params = {
@@ -312,6 +323,7 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         }
         smooth = self._run_process('native:smoothgeometry', params, context, 
                                    feedback)
+        smooth.setName('Center line')
         context.temporaryLayerStore().addMapLayer(smooth)
 
         return {self.OUTPUT: smooth.id()}
@@ -320,3 +332,21 @@ class PolygonCenterline(QgsProcessingAlgorithm):
     def _run_process(self, name, params, context, feedback):
         proc = processing.run(name, params, context=context, feedback=feedback)
         return proc['OUTPUT']
+
+    def validateInput(self, parameters, context, feedback):
+        """Validate the input layer against several requirements"""
+
+        lyr = self.parameterAsSource(
+            parameters,
+            self.INPUT,
+            context
+        )
+        # feedback.pushDebugInfo(str(type(lyr)))
+
+        if lyr.sourceCrs().isGeographic():
+            msg = 'No geographic CRS for input layer allowed'
+            raise QgsProcessingException(msg)
+
+        if lyr.wkbType() == QgsWkbTypes.MultiPolygon:
+            msg = 'No multipart feature allowed'
+            raise QgsProcessingException(msg)
