@@ -5,6 +5,13 @@ labeling polygons along the center line. This is mainly for nice cartographic
 labeling purposes.
 
 
+ATTENTION
+=========
+This is still a bit exerimental. It works with a single polygon in a single 
+layer in a metric CRS. I still need to do more input checks before calling 
+this stable ... but the excitemnet took me over ;-)
+
+
 Usage
 =====
 Download the script and use the "Add Script to Toolbox" menu from the processing 
