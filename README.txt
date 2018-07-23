@@ -1,15 +1,16 @@
 PolygonCenterline
 =================
-Calculate a center line for a given polygon. The purpose is to get a line for 
-labeling polygons along the center line. This is mainly for nice cartographic
+Calculate a center line for a given polygon layer. The purpose is to get a line
+for labeling polygons along their center line. This is mainly for nice cartographic
 labeling purposes.
 
 
-ATTENTION please!
-=================
-The script is still a bit exerimental. It works with a single polygon in a single 
-layer in a metric CRS. I still need to do more input checks before calling 
-this stable ... but the excitemnet took me over ;-)
+Issues
+======
+The script is quite slow at the moment and the route finding process is not
+optimal.
+Report and search for more issues on the issue tracker:
+https://github.com/frankbroniewski/polygoncenterline/issues
 
 
 Usage
@@ -20,11 +21,8 @@ toobox.
 Once added, start the script found under Scripts->Cartography->Calculate a polygon
 centerline.
 
-The script demands for a polygon - obviously - and a point distance value. This
-value is used in one of the first steps of the center line determination process.
-It creates a set of points at the given distance around the outline of the
-polygon. I advise to use polygons in a projected CRS where you can use metric
-values as the input.
+The script demands for a polygon layer. I advise to use polygons in a projected 
+CRS.
 
 If everything goes well you get a nice and smooth center line fit for labeling.
 
