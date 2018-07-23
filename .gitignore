@@ -1,0 +1,3 @@
+.vscode/settings.json
+test/data.gpkg-shm
+test/data.gpkg-wal
