@@ -21,10 +21,10 @@ __author__ = 'Frank Broniewski'
 __date__ = 'June 2018'
 __copyright__ = '(C) 2018, Frank Broniewski'
 
-__revision__  = '$Format:%H$'
-
+__revision__ = '$Format:%H$'
 
 from qgis.PyQt.QtCore import QCoreApplication
+
 from qgis.core import (QgsApplication,
                        QgsFeature,
                        QgsWkbTypes,
@@ -32,9 +32,12 @@ from qgis.core import (QgsApplication,
                        QgsExpression,
                        QgsFeatureRequest,
                        QgsFeatureSink,
+                       QgsVectorLayer,
+                       QgsProcessingFeedback,
                        QgsProcessingException,
                        QgsProcessingAlgorithm,
                        QgsProcessingOutputVectorLayer,
+                       QgsProcessingParameterBoolean,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterFeatureSink,
@@ -46,7 +49,7 @@ import processing
 class PolygonCenterline(QgsProcessingAlgorithm):
 
     INPUT = 'INPUT'
-    DISTANCE = 'DISTANCE'
+    SMOOTH = 'SMOOTH'
     OUTPUT = 'OUTPUT'
 
     def __init__(self):
@@ -62,11 +65,10 @@ class PolygonCenterline(QgsProcessingAlgorithm):
         return QgsApplication.getThemeIcon("algorithms/mAlgorithmDelaunay.svg")
 
     def helpString(self):
+        # h = 
         return self.tr("""Calculate a polygon centerline for pretty cartographic labeling of polygon features.
 
-INPUT: a single polygon feature, no Multipolygon allowed here
-
-DISTANCE: this measure is used for voronoi network creation. Take a sensible measure, make sure the value is not too small, otherwise the calculation time will increase. Try with the build in algorithm "Points along geometry" for getting an idea for a good spacing."""
+INPUT: a single polygon feature, no Multipolygon allowed here"""
         )
 
     def svgIconPath(self):
@@ -97,11 +99,10 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
         )
 
         self.addParameter(
-            QgsProcessingParameterNumber(
-                self.DISTANCE,
-                self.tr('Point distance value (for Voronoi creation)'),
-                type=QgsProcessingParameterNumber.Double,
-                minValue=10.0
+            QgsProcessingParameterBoolean(
+                self.SMOOTH,
+                self.tr('Smooth line?'),
+                defaultValue=True
             )
         )
 
@@ -112,200 +113,51 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
             )
         )
 
+
     def processAlgorithm(self, parameters, context, feedback):
 
-        self.validate_input(parameters, context, feedback)
+        source = self.parameterAsSource(parameters, self.INPUT, context)
+        self.validate_input(source, parameters, context, feedback)
 
-        # 1 qgis:pointsalonglines
-        params = {
-            'INPUT': parameters[self.INPUT], 
-            'DISTANCE': parameters[self.DISTANCE],
-            'START_OFFSET': 0,
-            'END_OFFSET': 0,
-            'OUTPUT': 'memory:'
-        }
-        points = self._run_process('qgis:pointsalonglines', params, context,
-                                   feedback)
+        feedback.pushInfo('Creating polygon center lines for %s polygons'
+                          % source.featureCount())
+        features = source.getFeatures()
+        crs = source.sourceCrs()
 
-        # 2 qgis:voronoipolygons
-        params = {
-            'INPUT': points,
-            'BUFFER': 0,
-            'OUTPUT': 'memory:'
-        }
-        voronoi = self._run_process('qgis:voronoipolygons', params, context, 
-                                    feedback)
-
-        # 3 native:clip
-        params = {
-            'INPUT': voronoi,
-            'OVERLAY': parameters[self.INPUT],
-            'OUTPUT': 'memory:'
-        }
-        clipped = self._run_process('native:clip', params, context, feedback)
-
-        # 4 qgis:polygonstolines
-        params = {
-            'INPUT': clipped,
-            'OUTPUT': 'memory:'
-        }
-        polygon_lines = self._run_process('qgis:polygonstolines', params,
-                                          context, feedback)
-
-        # 5 native:explodelines
-        params = {
-            'INPUT': polygon_lines,
-            'OUTPUT': 'memory:'
-        }
-        exploded = self._run_process('native:explodelines', params, context,
-                                     feedback)
-
-        # 6 qgis:deleteduplicategeometries
-        params = {
-            'INPUT': exploded,
-            'OUTPUT': 'memory:'
-        }
-        cleaned_voronoi = self._run_process('qgis:deleteduplicategeometries',
-                                            params, context, feedback)
-
-        # 7 native:dissolve
-        params = {
-            'INPUT': clipped,
-            'FIELD': None,
-            'OUTPUT': 'memory:'
-        }
-        dissolved = self._run_process('native:dissolve', params, context,
-                                     feedback)
-
-        # 8 qgis:polygonstolines
-        params = {
-            'INPUT': dissolved,
-            'OUTPUT': 'memory:'
-        }
-        outline = self._run_process('qgis:polygonstolines', params, context,
-                                    feedback)
-
-        # 9 native:selectbylocation
-        params = {
-            'INPUT': cleaned_voronoi,
-            'PREDICATE': 0,
-            'INTERSECT': outline,
-            'METHOD': 0
-        }
-        selection = self._run_process('native:selectbylocation', params,
-                                      context, feedback)
-
-        # 10 native:dropgeometries (selected)
-        selection.startEditing()
-        selection.deleteSelectedFeatures()
-        selection.commitChanges()
-
-        # native:extractvertices
-        params = {
-            'INPUT': selection,
-            'OUTPUT': 'memory:'
-        }
-        vertices = self._run_process('native:extractvertices', params, context,
-                                     feedback)
-
-        # qgis:deleteduplicategeometries
-        params = {
-            'INPUT': vertices,
-            'OUTPUT': 'memory:'
-        }
-        cleaned_vertices = self._run_process('qgis:deleteduplicategeometries',
-                                             params, context, feedback)
-
-        # native:addautoincrementalfield
-        params = {
-            'INPUT': cleaned_vertices,
-            'FIELD_NAME': 'vid',
-            'START': 1,
-            'OUTPUT': 'memory:'
-        }
-        vid = self._run_process('native:addautoincrementalfield', params,
-                                context, feedback)
-
-        # qgis:distancematrix
-        params = {
-            'INPUT': vid,
-            'INPUT_FIELD': 'vid',
-            'TARGET': vid,
-            'TARGET_FIELD': 'vid',
-            'MATRIX_TYPE': 0,
-            'NEAREST_POINTS': 0,
-            'OUTPUT': 'memory:'
-        }
-        matrix = self._run_process('qgis:distancematrix', params, context,
-                                   feedback)
-
-        max_distance = 0
-        max_feature = None
-        for feature in matrix.getFeatures():
-            if feature['Distance'] > max_distance:
-                # feedback.pushDebugInfo(
-                #     "tf %s, if %s, dis %s" %
-                #     (feature['TargetID'],
-                #      feature['InputID'],
-                #      feature['Distance'])
-                # )
-                max_distance = feature['Distance']
-                max_feature = QgsFeature(feature)
-
-        if not max_feature:
-            raise QgsExpression('Could not select maximum distance, aborting')
-
-        target_expr = "vid=%s" % max_feature['TargetID']
-        target_features = vid.getFeatures(
-            QgsFeatureRequest(QgsExpression(target_expr))
+        (sink, dest_id) = self.parameterAsSink(
+            parameters,
+            self.OUTPUT,
+            context,
+            source.fields(),
+            # QgsWkbTypes.Point,
+            QgsWkbTypes.LineString,
+            crs
         )
-        target_feature = next(target_features)
 
-        if not target_feature.isValid():
-            feedback.pushDebugInfo(
-                "%s, %s" % (
-                    target_feature.geometry().asPoint().x(),
-                    target_feature.geometry().asPoint().y()
-                )
-            )
-            raise QgsProcessingException('Path calculation failed: target point')
+        for count, feature in enumerate(features, start=1):
+            feedback.pushInfo('Working on feature %s' % count)
 
-        target_point = '%s,%s' % (target_feature.geometry().asPoint().x(),
-                                  target_feature.geometry().asPoint().y())
+            network = self.calc_network(feature, crs, context,
+                                        feedback)
+            end_points = self.calc_end_points(network, context, feedback)
+            centerline = self.calc_centerline(network, end_points, context, 
+                                              feedback)
 
-        input_expr = "vid=%s" % max_feature['InputID']
-        input_features = vid.getFeatures(
-            QgsFeatureRequest(QgsExpression(input_expr))
-        )
-        input_feature = next(input_features)
-        if not input_feature.isValid() and not target_feature.isValid():
-            feedback.pushDebugInfo(
-                "%s, %s" % (
-                    input_feature.geometry().asPoint().x(),
-                    input_feature.geometry().asPoint().y()
-                )
-            )
-            raise QgsProcessingException('Path calculation failed: input point')
-        input_point = '%s,%s' % (input_feature.geometry().asPoint().x(),
-                                 input_feature.geometry().asPoint().y())
+            # we need the centerline only for its geometry
+            # & copy the attributes over from the current feature
+            for cf in centerline.getFeatures():
+                f = QgsFeature()
+                f.setGeometry(cf.geometry())
+                f.setAttributes(feature.attributes())
+                sink.addFeature(f)
 
-        # qgis:shortestpathpointtopoint
-        params = {
-            'INPUT': selection,
-            'START_POINT': input_point,
-            'END_POINT': target_point,
-            'STRATEGY': 0,
-            'DEFAULT_DIRECTION': 2,
-            'DEFAULT_SPEED': 5,
-            'TOLERANCE': 1,
-            'OUTPUT': 'memory:'
-        }
-        route = self._run_process('qgis:shortestpathpointtopoint', params,
-                                   context, feedback)
+        # return if no smoothing should be applied
+        if not parameters['SMOOTH']:
+            return {self.OUTPUT: dest_id}
 
         #  native:simplifygeometries
         params = {
-            'INPUT': route,
+            'INPUT': dest_id,
             'METHOD': 0,
             'TOLERANCE': 5,
             'OUTPUT': 'memory:'
@@ -327,24 +179,243 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
         context.temporaryLayerStore().addMapLayer(smooth)
 
         return {self.OUTPUT: smooth.id()}
-    
+
+
+    def calc_network(self, polygon, crs, context, feedback):
+        """calculate voronoi network for given polygon retrieving the
+            'inner' network"""
+
+        # we calculate the distance value for qgis:pointsalonglines with a 
+        # percentage instead of a fixed value; less input and better 
+        # adaptibility with varying polygon sizes. A value of 0.03% seems good
+        perimeter = polygon.geometry().length()
+        distance = perimeter * 0.025
+
+        # we're creating a temp layer here for the feature so it's usable in 
+        # processing
+        lyr = self.layer_from_feature(polygon, crs)
+        prov = lyr.dataProvider()
+
+        if not lyr.isValid():
+            msg = 'Cannot prepare network: Unable to create layer from feature'
+            raise QgsProcessingException(msg)
+
+        (success, _) = prov.addFeatures([polygon])
+        if not success:
+            msg = 'Cannot prepare network: Cannot add feature to temporary layer'
+            raise QgsProcessingException(msg)
+
+        # 1 qgis:pointsalonglines
+        # take input and create points around geometry
+        params = {
+            'INPUT': lyr, 
+            'DISTANCE': distance,
+            'START_OFFSET': 0,
+            'END_OFFSET': 0,
+            'OUTPUT': 'memory:'
+        }
+        points = self._run_process('qgis:pointsalonglines', params, context,
+                                   feedback)
+
+        # 2 qgis:voronoipolygons
+        # create voronoi from step 1 points
+        params = {
+            'INPUT': points,
+            'BUFFER': 0,
+            'OUTPUT': 'memory:'
+        }
+        voronoi = self._run_process('qgis:voronoipolygons', params, context, 
+                                    feedback)
+
+        # 3 native:clip
+        # clip voronoi from step 2 to input polygon
+        params = {
+            'INPUT': voronoi,
+            'OVERLAY': lyr,
+            'OUTPUT': 'memory:'
+        }
+        clipped = self._run_process('native:clip', params, context, feedback)
+
+        # 4 qgis:polygonstolines
+        # turn voronoi polygon into lines
+        params = {
+            'INPUT': clipped,
+            'OUTPUT': 'memory:'
+        }
+        polygon_lines = self._run_process('qgis:polygonstolines', params,
+                                          context, feedback)
+
+        # 5 native:explodelines
+        # voronoi network line cleanup
+        params = {
+            'INPUT': polygon_lines,
+            'OUTPUT': 'memory:'
+        }
+        exploded = self._run_process('native:explodelines', params, context,
+                                    feedback)
+
+        # 6 qgis:deleteduplicategeometries
+        # voronoi network line cleanup
+        params = {
+            'INPUT': exploded,
+            'OUTPUT': 'memory:'
+        }
+        cleaned_voronoi = self._run_process('qgis:deleteduplicategeometries',
+                                            params, context, feedback)
+
+        # 7 native:dissolve
+        # dissolve voronoi polygon into one single polygon
+        # create outline from voronoi (remove outer boundary from network)
+        params = {
+            'INPUT': clipped,
+            'FIELD': None,
+            'OUTPUT': 'memory:'
+        }
+        dissolved = self._run_process('native:dissolve', params, context,
+                                      feedback)
+
+        # 8 qgis:polygonstolines
+        # create outline from voronoi (remove outer boundary from network)
+        params = {
+            'INPUT': dissolved,
+            'OUTPUT': 'memory:'
+        }
+        outline = self._run_process('qgis:polygonstolines', params, context,
+                                    feedback)
+
+        # 9 native:selectbylocation
+        # select outline from network and remove it
+        params = {
+            'INPUT': cleaned_voronoi,
+            'PREDICATE': 0,
+            'INTERSECT': outline,
+            'METHOD': 0
+        }
+        network = self._run_process('native:selectbylocation', params,
+                                    context, feedback)
+
+        # 10 native:dropgeometries (selected)
+        # delete selection (outline)
+        network.startEditing()
+        network.deleteSelectedFeatures()
+        network.commitChanges()
+
+        return network
+
+
+    def calc_end_points(self, network, context, feedback):
+        """Calculate network end points for routing"""
+        # 11 native:extractvertices
+        # get vertices from network -> find end point nodes
+        params = {
+            'INPUT': network,
+            'OUTPUT': 'memory:'
+        }
+        vertices = self._run_process('native:extractvertices', params,
+                                     context, feedback)
+
+        # 12 add our own id field for count summary
+        # native:addautoincrementalfield
+        params = {
+            'INPUT': vertices,
+            'FIELD_NAME': 'vid',
+            'START': 1,
+            'OUTPUT': 'memory:'
+        }
+        id_vertices = self._run_process('native:addautoincrementalfield', params,
+                                        context, feedback)
+
+        # calculate summary how many features intersect at each place
+        # we want features with only 1 count -> these are end points
+        # the end points are used for the routing algorithm
+        # 13 qgis:joinbylocationsummary
+        params = {
+            'INPUT': id_vertices,
+            'JOIN': id_vertices,
+            'PREDICATE': 0,
+            'SUMMARIES': 0,
+            'DISCARD_NONMATCHING': True,
+            'OUTPUT': 'memory:'
+        }
+        joined = self._run_process('qgis:joinbylocationsummary', params,
+                                   context, feedback)
+
+        # 14 select where distance_count = 1
+        # qgis:selectbyattribute
+        params = {
+            'INPUT': joined,
+            'FIELD': 'vid_count',
+            'OPERATOR': 2,
+            'VALUE': '1',
+            'METHOD': 0
+        }
+        end_points = self._run_process('qgis:selectbyattribute', params, context,
+                                       feedback)
+        end_points.startEditing()
+        end_points.deleteSelectedFeatures()
+        end_points.commitChanges()
+
+        return end_points
+
+
+    def calc_centerline(self, network, end_points, context, feedback):
+        """returns the centerline from a network calculated by end points"""
+
+        center_line = None
+        max_cost = 0
+
+        features = end_points.getFeatures()
+        for point in features:
+            # start point
+            sp =  '%s,%s' % (
+                point.geometry().asPoint().x(),
+                point.geometry().asPoint().y()
+            )
+            params = {
+                'INPUT': network,
+                'START_POINT': sp,
+                'END_POINTS': end_points,
+                'STRATEGY': 0,
+                'DEFAULT_DIRECTION': 2,
+                'DEFAULT_SPEED': 5,
+                'TOLERANCE': 1,
+                'OUTPUT': 'memory:'
+            }
+            route = self._run_process('qgis:shortestpathpointtolayer', params, 
+                                      context, feedback)
+            cost, most_expensive_route = self.cost_route(route, feedback)
+
+            if center_line is None:
+                center_line = self.duplicate_layer(most_expensive_route, feedback)
+                max_cost = cost
+            elif max_cost < cost:
+                center_line = self.duplicate_layer(most_expensive_route, feedback)
+                max_cost = cost
+        
+        return center_line
+
 
     def _run_process(self, name, params, context, feedback):
-        proc = processing.run(name, params, context=context, feedback=feedback)
+        """wrapper: run a QGIS processing framework process"""
+
+        if feedback.isCanceled():
+            exit()
+        
+        my_feedback = QgsProcessingFeedback()
+        proc = processing.run(name, params, context=context,
+                              feedback=my_feedback)
         return proc['OUTPUT']
 
-    def validate_input(self, parameters, context, feedback):
-        """Validate the input layer against several requirements"""
 
-        lyr = self.parameterAsSource(
-            parameters,
-            self.INPUT,
-            context
-        )
+    def validate_input(self, lyr, parameters, context, feedback):
+        """Validate the input layer against several requirements"""
         
         if lyr is None:
             raise QgsProcessingException(self.invalidSourceError(parameters,
                                          self.INPUT))
+
+        if lyr.featureCount() == 0:
+            raise QgsProcessingException('Input layer has no features')
 
         if lyr.sourceCrs().isGeographic():
             msg = 'No geographic CRS for input layer allowed'
@@ -353,3 +424,83 @@ DISTANCE: this measure is used for voronoi network creation. Take a sensible mea
         if lyr.wkbType() == QgsWkbTypes.MultiPolygon:
             msg = 'No multipart feature allowed'
             raise QgsProcessingException(msg)
+
+
+    def create_layer_string(self, geometry_type, fields, crs):
+        """create a memory layer creation string from the given parameters"""
+
+        # fields
+        field_str = '&'.join([
+            'field=%s:%s' % (f.name(), f.typeName())
+            for f in fields
+        ])
+
+        # layer's geometryType() might return Line as geometry type
+        # which is unsuitable for layer creation
+        gtype = QgsWkbTypes.geometryDisplayString(geometry_type)
+        if gtype.startswith('Line'):
+            gtype = 'Linestring'
+
+        return '{type}?crs={id}&{field_str}&index=yes'.format(
+            type=gtype,
+            id=crs.authid(),
+            field_str=field_str
+        )
+
+
+    def duplicate_layer(self, layer, feedback):
+        """create a copy/duplicate of the layer"""
+
+        # lyr_str = self.create_layer_string(geometry_type, fields, crs)
+        duplicate = QgsVectorLayer(layer.source(), 'Duplicate', 'memory')
+
+        if not duplicate.isValid():
+            feedback.pushDebugInfo(lyr_str)
+            raise QgsProcessingException('Cannot duplicate layer')
+
+        features = layer.getFeatures()
+        prov = duplicate.dataProvider().addFeatures([f for f in features])
+
+        if duplicate.featureCount() == 0:
+            raise QgsProcessingException('No features in duplicate')
+
+        return duplicate
+
+
+    def layer_from_feature(self, feature, crs):
+        """create a new layer based on the feature's properties and put the 
+            feature in it"""
+
+        geometry_type = feature.geometry().type()
+        fields = feature.fields()
+
+        lyr_str = self.create_layer_string(geometry_type, fields, crs)
+
+        lyr = QgsVectorLayer(lyr_str, 'Layer from feature', 'memory')
+
+        if not lyr.isValid():
+            raise QgsProcessingException('Cannot create layer from feature')
+
+        return lyr
+
+
+    def cost_route(self, route, feedback):
+        """Extract the route with the highest cost from network point to layer"""
+
+        longest_route = QgsVectorLayer(route.source(), 'Longest route', 'memory')
+
+        # better work on a duplicate here to not mess things up with selections
+        dupl = self.duplicate_layer(route, feedback)
+        dupl.removeSelection()
+
+        # need the field's index for retrieval, not the name
+        field_map = dupl.dataProvider().fieldNameMap()
+        maximum = dupl.maximumValue(field_map['cost'])
+
+        request = QgsFeatureRequest(QgsExpression("cost=%s" % maximum))
+        longest_route.startEditing()
+        for feature in dupl.getFeatures(request):
+            longest_route.addFeature(feature)
+        longest_route.commitChanges()
+
+        return (maximum, longest_route)
